@@ -1,0 +1,1268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AnalyQuiz - Syllabus-Based MCQ Quiz Platform</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React and ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Icons -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    
+    <style>
+        .timer-warning {
+            animation: pulse 1s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.3s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <div id="app"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        
+        // API Configuration
+        const API_BASE_URL = 'http://localhost:8000/api';
+        
+        // API Client
+        class ApiClient {
+            constructor() {
+                this.baseURL = API_BASE_URL;
+                this.token = localStorage.getItem('auth_token');
+            }
+            
+            setToken(token) {
+                this.token = token;
+                localStorage.setItem('auth_token', token);
+            }
+            
+            clearToken() {
+                this.token = null;
+                localStorage.removeItem('auth_token');
+            }
+            
+            async request(endpoint, options = {}) {
+                const url = `${this.baseURL}${endpoint}`;
+                const headers = {
+                    'Content-Type': 'application/json',
+                    ...options.headers
+                };
+                
+                if (this.token) {
+                    headers['Authorization'] = `Bearer ${this.token}`;
+                }
+                
+                if (options.body && options.body instanceof FormData) {
+                    delete headers['Content-Type'];
+                }
+                
+                const response = await fetch(url, {
+                    ...options,
+                    headers
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({ detail: 'Network error' }));
+                    throw new Error(error.detail || 'Request failed');
+                }
+                
+                return response.json();
+            }
+            
+            // Auth methods
+            async signup(userData) {
+                const response = await this.request('/auth/signup', {
+                    method: 'POST',
+                    body: JSON.stringify(userData)
+                });
+                this.setToken(response.access_token);
+                return response;
+            }
+            
+            async login(credentials) {
+                const response = await this.request('/auth/login', {
+                    method: 'POST',
+                    body: JSON.stringify(credentials)
+                });
+                this.setToken(response.access_token);
+                return response;
+            }
+            
+            async getCurrentUser() {
+                return this.request('/auth/me');
+            }
+            
+            // Syllabus methods
+            async uploadSyllabus(file) {
+                const formData = new FormData();
+                formData.append('file', file);
+                return this.request('/syllabus/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+            }
+            
+            async getSyllabi() {
+                return this.request('/syllabus/list');
+            }
+            
+            // Quiz methods
+            async generateQuiz(syllabusId, numQuestions = 10, difficulty = 'medium') {
+                return this.request('/quiz/generate', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        syllabus_id: syllabusId,
+                        num_questions: numQuestions,
+                        difficulty
+                    })
+                });
+            }
+            
+            async getQuiz(quizId) {
+                return this.request(`/quiz/${quizId}`);
+            }
+            
+            async submitQuiz(quizId, answers) {
+                return this.request('/quiz/submit', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        quiz_id: quizId,
+                        answers
+                    })
+                });
+            }
+            
+            async getQuizResults() {
+                return this.request('/quiz/list/results');
+            }
+            
+            async getQuizResult(resultId) {
+                return this.request(`/quiz/results/${resultId}`);
+            }
+            
+            // Feedback methods
+            async generateFeedback(resultId) {
+                return this.request('/feedback/generate', {
+                    method: 'POST',
+                    body: JSON.stringify({ result_id: resultId })
+                });
+            }
+        }
+        
+        const api = new ApiClient();
+        
+        // Auth Context
+        const AuthContext = React.createContext();
+        
+        function AuthProvider({ children }) {
+            const [user, setUser] = useState(null);
+            const [loading, setLoading] = useState(true);
+            
+            useEffect(() => {
+                const token = localStorage.getItem('auth_token');
+                if (token) {
+                    api.getCurrentUser()
+                        .then(setUser)
+                        .catch(() => {
+                            localStorage.removeItem('auth_token');
+                            api.clearToken();
+                        })
+                        .finally(() => setLoading(false));
+                } else {
+                    setLoading(false);
+                }
+            }, []);
+            
+            const login = async (credentials) => {
+                const response = await api.login(credentials);
+                setUser(response.user);
+                return response;
+            };
+            
+            const signup = async (userData) => {
+                const response = await api.signup(userData);
+                setUser(response.user);
+                return response;
+            };
+            
+            const logout = () => {
+                api.clearToken();
+                setUser(null);
+            };
+            
+            return (
+                <AuthContext.Provider value={{ user, login, signup, logout, loading }}>
+                    {children}
+                </AuthContext.Provider>
+            );
+        }
+        
+        // Auth Components
+        function LoginForm({ onToggle }) {
+            const [formData, setFormData] = useState({ email: '', password: '' });
+            const [error, setError] = useState('');
+            const [loading, setLoading] = useState(false);
+            const { login } = React.useContext(AuthContext);
+            
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setLoading(true);
+                setError('');
+                
+                try {
+                    await login(formData);
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+            
+            return (
+                <div className="max-w-md mx-auto bg-white p-8 rounded-lg shadow-lg">
+                    <h2 className="text-2xl font-bold mb-6 text-center">Login</h2>
+                    
+                    {error && (
+                        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+                            {error}
+                        </div>
+                    )}
+                    
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Email
+                            </label>
+                            <input
+                                type="email"
+                                required
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                value={formData.email}
+                                onChange={(e) => setFormData({...formData, email: e.target.value})}
+                            />
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Password
+                            </label>
+                            <input
+                                type="password"
+                                required
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                value={formData.password}
+                                onChange={(e) => setFormData({...formData, password: e.target.value})}
+                            />
+                        </div>
+                        
+                        <button
+                            type="submit"
+                            disabled={loading}
+                            className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                        >
+                            {loading ? 'Logging in...' : 'Login'}
+                        </button>
+                    </form>
+                    
+                    <p className="mt-4 text-center text-sm text-gray-600">
+                        Don't have an account?{' '}
+                        <button
+                            onClick={onToggle}
+                            className="text-blue-600 hover:underline"
+                        >
+                            Sign up
+                        </button>
+                    </p>
+                </div>
+            );
+        }
+        
+        function SignupForm({ onToggle }) {
+            const [formData, setFormData] = useState({ name: '', email: '', password: '' });
+            const [error, setError] = useState('');
+            const [loading, setLoading] = useState(false);
+            const { signup } = React.useContext(AuthContext);
+            
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setLoading(true);
+                setError('');
+                
+                try {
+                    await signup(formData);
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+            
+            return (
+                <div className="max-w-md mx-auto bg-white p-8 rounded-lg shadow-lg">
+                    <h2 className="text-2xl font-bold mb-6 text-center">Sign Up</h2>
+                    
+                    {error && (
+                        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+                            {error}
+                        </div>
+                    )}
+                    
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Name
+                            </label>
+                            <input
+                                type="text"
+                                required
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                value={formData.name}
+                                onChange={(e) => setFormData({...formData, name: e.target.value})}
+                            />
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Email
+                            </label>
+                            <input
+                                type="email"
+                                required
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                value={formData.email}
+                                onChange={(e) => setFormData({...formData, email: e.target.value})}
+                            />
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Password
+                            </label>
+                            <input
+                                type="password"
+                                required
+                                minLength="6"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                value={formData.password}
+                                onChange={(e) => setFormData({...formData, password: e.target.value})}
+                            />
+                        </div>
+                        
+                        <button
+                            type="submit"
+                            disabled={loading}
+                            className="w-full bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 disabled:opacity-50"
+                        >
+                            {loading ? 'Creating account...' : 'Sign Up'}
+                        </button>
+                    </form>
+                    
+                    <p className="mt-4 text-center text-sm text-gray-600">
+                        Already have an account?{' '}
+                        <button
+                            onClick={onToggle}
+                            className="text-blue-600 hover:underline"
+                        >
+                            Login
+                        </button>
+                    </p>
+                </div>
+            );
+        }
+        
+        function AuthPage() {
+            const [isLogin, setIsLogin] = useState(true);
+            
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+                    <div className="w-full max-w-md">
+                        {isLogin ? (
+                            <LoginForm onToggle={() => setIsLogin(false)} />
+                        ) : (
+                            <SignupForm onToggle={() => setIsLogin(true)} />
+                        )}
+                    </div>
+                </div>
+            );
+        }
+        
+        // Main App Component
+        function App() {
+            const { user, loading, logout } = React.useContext(AuthContext);
+            const [currentPage, setCurrentPage] = useState('home');
+            const [pageData, setPageData] = useState(null);
+            
+            if (loading) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center">
+                        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+                    </div>
+                );
+            }
+            
+            if (!user) {
+                return <AuthPage />;
+            }
+            
+            const navigate = (page, data = null) => {
+                setPageData(data);
+                setCurrentPage(page);
+            };
+            
+            return (
+                <div className="min-h-screen bg-gray-50">
+                    {/* Navigation */}
+                    <nav className="bg-white shadow-sm border-b">
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                            <div className="flex justify-between h-16">
+                                <div className="flex items-center">
+                                    <h1 className="text-2xl font-bold text-blue-600">AnalyQuiz</h1>
+                                </div>
+                                
+                                <div className="flex items-center space-x-4">
+                                    <button
+                                        onClick={() => navigate('home')}
+                                        className="text-gray-700 hover:text-blue-600 px-3 py-2 rounded-md text-sm font-medium"
+                                    >
+                                        Home
+                                    </button>
+                                    <button
+                                        onClick={() => navigate('results')}
+                                        className="text-gray-700 hover:text-blue-600 px-3 py-2 rounded-md text-sm font-medium"
+                                    >
+                                        Results
+                                    </button>
+                                    <div className="flex items-center space-x-2">
+                                        <span className="text-sm text-gray-700">Welcome, {user.name}</span>
+                                        <button
+                                            onClick={logout}
+                                            className="text-red-600 hover:text-red-800 text-sm"
+                                        >
+                                            Logout
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </nav>
+                    
+                    {/* Main Content */}
+                    <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+                        {currentPage === 'home' && <HomePage navigate={navigate} />}
+                        {currentPage === 'quiz' && <QuizPage quizId={pageData} navigate={navigate} />}
+                        {currentPage === 'result' && <ResultPage resultId={pageData} navigate={navigate} />}
+                        {currentPage === 'results' && <ResultsListPage navigate={navigate} />}
+                    </main>
+                </div>
+            );
+        }
+        
+        // HomePage Component
+        function HomePage({ navigate }) {
+            const [syllabi, setSyllabi] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [uploading, setUploading] = useState(false);
+            const [error, setError] = useState('');
+            const [success, setSuccess] = useState('');
+            const fileInputRef = useRef(null);
+
+            useEffect(() => {
+                loadSyllabi();
+            }, []);
+
+            const loadSyllabi = async () => {
+                try {
+                    const data = await api.getSyllabi();
+                    setSyllabi(data);
+                } catch (err) {
+                    setError('Failed to load syllabi');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleFileUpload = async (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                if (!file.name.toLowerCase().endsWith('.pdf')) {
+                    setError('Please select a PDF file');
+                    return;
+                }
+
+                if (file.size > 10 * 1024 * 1024) {
+                    setError('File size must be less than 10MB');
+                    return;
+                }
+
+                setUploading(true);
+                setError('');
+                setSuccess('');
+
+                try {
+                    await api.uploadSyllabus(file);
+                    setSuccess('Syllabus uploaded successfully!');
+                    loadSyllabi();
+                    if (fileInputRef.current) {
+                        fileInputRef.current.value = '';
+                    }
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setUploading(false);
+                }
+            };
+
+            const handleGenerateQuiz = async (syllabusId) => {
+                try {
+                    setLoading(true);
+                    console.log('Generating quiz for syllabus:', syllabusId); // Debug logging
+                    const quiz = await api.generateQuiz(syllabusId);
+                    console.log('Quiz generation response:', quiz); // Debug logging
+                    if (quiz && quiz.id) {
+                        console.log('Navigating to quiz with ID:', quiz.id); // Debug logging
+                        navigate('quiz', quiz.id);
+                    } else {
+                        console.error('Invalid quiz response:', quiz); // Debug logging
+                        setError('Failed to generate quiz: Invalid response from server');
+                    }
+                } catch (err) {
+                    console.error('Quiz generation error:', err); // Debug logging
+                    setError('Failed to generate quiz: ' + err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <div className="fade-in">
+                    <div className="text-center mb-8">
+                        <h1 className="text-4xl font-bold text-gray-900 mb-4">Welcome to AnalyQuiz</h1>
+                        <p className="text-xl text-gray-600">Upload your syllabus and generate personalized MCQ quizzes</p>
+                    </div>
+
+                    <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+                        <h2 className="text-2xl font-semibold mb-4">Upload Syllabus</h2>
+                        
+                        {error && (
+                            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+                                {error}
+                            </div>
+                        )}
+                        
+                        {success && (
+                            <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
+                                {success}
+                            </div>
+                        )}
+
+                        <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept=".pdf"
+                                onChange={handleFileUpload}
+                                className="hidden"
+                                id="file-upload"
+                            />
+                            <label htmlFor="file-upload" className="cursor-pointer">
+                                <div className="space-y-2">
+                                    <div className="text-6xl text-gray-400">📁</div>
+                                    <div className="text-lg text-gray-600">
+                                        {uploading ? 'Uploading...' : 'Click to upload PDF syllabus'}
+                                    </div>
+                                    <div className="text-sm text-gray-500">Maximum file size: 10MB</div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-lg shadow-md p-6">
+                        <h2 className="text-2xl font-semibold mb-4">Your Syllabi</h2>
+                        
+                        {loading ? (
+                            <div className="text-center py-8">
+                                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                                <p className="mt-4 text-gray-600">Loading syllabi...</p>
+                            </div>
+                        ) : syllabi.length === 0 ? (
+                            <div className="text-center py-8 text-gray-500">
+                                <div className="text-4xl mb-4">📚</div>
+                                <p>No syllabi uploaded yet. Upload your first syllabus to get started!</p>
+                            </div>
+                        ) : (
+                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                                {syllabi.map((syllabus) => (
+                                    <div key={syllabus.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                                        <h3 className="font-semibold text-lg mb-2">{syllabus.filename}</h3>
+                                        <p className="text-sm text-gray-600 mb-2">
+                                            Uploaded: {new Date(syllabus.created_at).toLocaleDateString()}
+                                        </p>
+                                        <p className="text-sm text-gray-600 mb-4">
+                                            Quizzes created: {syllabus.quiz_count}
+                                        </p>
+                                        <button
+                                            onClick={() => handleGenerateQuiz(syllabus.id)}
+                                            className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors"
+                                        >
+                                            Generate Quiz
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // Enhanced QuizPage Component
+        function QuizPage({ quizId, navigate }) {
+            const [quiz, setQuiz] = useState(null);
+            const [answers, setAnswers] = useState({});
+            const [timeLeft, setTimeLeft] = useState(0);
+            const [loading, setLoading] = useState(true);
+            const [submitting, setSubmitting] = useState(false);
+            const [error, setError] = useState('');
+            const [currentQuestion, setCurrentQuestion] = useState(0);
+            const intervalRef = useRef(null);
+
+            useEffect(() => {
+                if (quizId) {
+                    loadQuiz();
+                }
+                return () => {
+                    if (intervalRef.current) {
+                        clearInterval(intervalRef.current);
+                    }
+                };
+            }, [quizId]);
+
+            const loadQuiz = async () => {
+                try {
+                    console.log('Loading quiz with ID:', quizId, 'Type:', typeof quizId); // Debug logging
+                    
+                    if (quizId === 'null' || quizId === 'undefined') {
+                        console.error('Invalid quiz ID detected:', quizId); // Debug logging
+                        setError('Invalid quiz ID. Please try generating the quiz again.');
+                        setLoading(false);
+                        return;
+                    }
+                    
+                    console.log('Fetching quiz from API...'); // Debug logging
+                    const response = await api.getQuiz(quizId);
+                    console.log('Quiz response:', response); // Debug logging
+                    setQuiz(response);
+                    setTimeLeft(response.time_limit * 60);
+                    
+                    // Start timer
+                    intervalRef.current = setInterval(() => {
+                        setTimeLeft((prev) => {
+                            if (prev <= 1) {
+                                handleSubmit();
+                                return 0;
+                            }
+                            return prev - 1;
+                        });
+                    }, 1000);
+                } catch (err) {
+                    setError('Failed to load quiz: ' + err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleAnswerChange = (questionId, answer) => {
+                setAnswers(prev => ({
+                    ...prev,
+                    [questionId]: answer
+                }));
+            };
+
+            const handleSubmit = async () => {
+                if (submitting) return;
+                
+                setSubmitting(true);
+                
+                try {
+                    const result = await api.submitQuiz(quizId, answers);
+                    console.log('Quiz submit result:', result); // Debug logging
+                    navigate('result', result.id);
+                } catch (err) {
+                    setError('Failed to submit quiz: ' + err.message);
+                    setSubmitting(false);
+                }
+            };
+
+            const formatTime = (seconds) => {
+                const minutes = Math.floor(seconds / 60);
+                const remainingSeconds = seconds % 60;
+                return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+            };
+
+            const nextQuestion = () => {
+                if (currentQuestion < quiz.questions.length - 1) {
+                    setCurrentQuestion(currentQuestion + 1);
+                }
+            };
+
+            const previousQuestion = () => {
+                if (currentQuestion > 0) {
+                    setCurrentQuestion(currentQuestion - 1);
+                }
+            };
+
+            const goToQuestion = (index) => {
+                setCurrentQuestion(index);
+            };
+
+            if (loading) {
+                return (
+                    <div className="text-center py-12">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                        <p className="mt-4 text-gray-600">Loading quiz...</p>
+                    </div>
+                );
+            }
+
+            if (error) {
+                return (
+                    <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+                        {error}
+                        <button
+                            onClick={() => navigate('home')}
+                            className="ml-4 bg-blue-600 text-white py-1 px-3 rounded-md hover:bg-blue-700"
+                        >
+                            Back to Home
+                        </button>
+                    </div>
+                );
+            }
+
+            if (!quiz || !quiz.questions || quiz.questions.length === 0) {
+                return (
+                    <div className="text-center py-12">
+                        <h1 className="text-3xl font-bold mb-4">No Quiz Found</h1>
+                        <p className="text-gray-600 mb-6">This quiz could not be loaded.</p>
+                        <button
+                            onClick={() => navigate('home')}
+                            className="bg-blue-600 text-white py-2 px-6 rounded-md hover:bg-blue-700"
+                        >
+                            Back to Home
+                        </button>
+                    </div>
+                );
+            }
+
+            const currentQ = quiz.questions[currentQuestion];
+            const progress = ((currentQuestion + 1) / quiz.questions.length) * 100;
+            const answeredCount = Object.keys(answers).length;
+
+            return (
+                <div className="max-w-4xl mx-auto">
+                    {/* Header with Timer and Progress */}
+                    <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+                        <div className="flex justify-between items-center mb-4">
+                            <h1 className="text-2xl font-bold">Quiz in Progress</h1>
+                            <div className={`text-xl font-mono ${timeLeft <= 300 ? 'text-red-600 animate-pulse' : 'text-green-600'}`}>
+                                ⏰ {formatTime(timeLeft)}
+                            </div>
+                        </div>
+                        
+                        <div className="mb-4">
+                            <div className="flex justify-between text-sm text-gray-600 mb-2">
+                                <span>Progress: {currentQuestion + 1} of {quiz.questions.length}</span>
+                                <span>Answered: {answeredCount}/{quiz.questions.length}</span>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                                <div 
+                                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                                    style={{width: `${progress}%`}}
+                                ></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Question Navigation */}
+                    <div className="bg-white rounded-lg shadow-md p-4 mb-6">
+                        <div className="grid grid-cols-10 gap-2">
+                            {quiz.questions.map((_, index) => (
+                                <button
+                                    key={index}
+                                    onClick={() => goToQuestion(index)}
+                                    className={`w-8 h-8 rounded text-sm font-medium ${
+                                        index === currentQuestion 
+                                            ? 'bg-blue-600 text-white' 
+                                            : answers[quiz.questions[index].id]
+                                                ? 'bg-green-500 text-white'
+                                                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                    }`}
+                                >
+                                    {index + 1}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Current Question */}
+                    <div className="bg-white rounded-lg shadow-md p-8">
+                        <div className="mb-6">
+                            <div className="text-sm text-gray-500 mb-2">
+                                Question {currentQuestion + 1} of {quiz.questions.length}
+                            </div>
+                            <h2 className="text-xl font-semibold text-gray-900">
+                                {currentQ.question}
+                            </h2>
+                        </div>
+                        
+                        <div className="space-y-4">
+                            {currentQ.options.map((option, index) => (
+                                <label
+                                    key={option}
+                                    className="flex items-center space-x-3 cursor-pointer hover:bg-gray-50 p-3 rounded-lg border-2 border-transparent hover:border-gray-200 transition-all"
+                                >
+                                    <input
+                                        type="radio"
+                                        name={`question-${currentQ.id}`}
+                                        value={option}
+                                        checked={answers[currentQ.id] === option}
+                                        onChange={(e) => handleAnswerChange(currentQ.id, e.target.value)}
+                                        className="text-blue-600 w-4 h-4"
+                                    />
+                                    <div className="flex items-center space-x-2">
+                                        <span className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-sm font-medium">
+                                            {String.fromCharCode(65 + index)}
+                                        </span>
+                                        <span className="text-gray-700">{option}</span>
+                                    </div>
+                                </label>
+                            ))}
+                        </div>
+
+                        {/* Navigation Buttons */}
+                        <div className="flex justify-between items-center mt-8">
+                            <button
+                                onClick={previousQuestion}
+                                disabled={currentQuestion === 0}
+                                className="px-6 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                Previous
+                            </button>
+                            
+                            <div className="text-sm text-gray-500">
+                                {answers[currentQ.id] ? '✓ Answered' : 'Not answered'}
+                            </div>
+                            
+                            {currentQuestion === quiz.questions.length - 1 ? (
+                                <button
+                                    onClick={handleSubmit}
+                                    disabled={submitting}
+                                    className="px-8 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 font-semibold"
+                                >
+                                    {submitting ? 'Submitting...' : 'Submit Quiz'}
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={nextQuestion}
+                                    className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                                >
+                                    Next
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Submit Warning for incomplete quiz */}
+                    {answeredCount < quiz.questions.length && (
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mt-6">
+                            <div className="flex items-center">
+                                <div className="text-yellow-600 mr-3">⚠️</div>
+                                <div>
+                                    <h3 className="text-yellow-800 font-medium">Incomplete Quiz</h3>
+                                    <p className="text-yellow-700 text-sm">
+                                        You have {quiz.questions.length - answeredCount} unanswered questions. 
+                                        You can submit anyway, but unanswered questions will be marked as incorrect.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // Enhanced ResultPage Component
+        function ResultPage({ resultId, navigate }) {
+            const [result, setResult] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState('');
+
+            useEffect(() => {
+                if (resultId) {
+                    loadResult();
+                }
+            }, [resultId]);
+
+            const loadResult = async () => {
+                try {
+                    console.log('Loading result with ID:', resultId); // Debug logging
+                    const response = await api.getQuizResult(resultId);
+                    console.log('Result response:', response); // Debug logging
+                    setResult(response);
+                } catch (err) {
+                    console.error('Error loading result:', err); // Debug logging
+                    setError('Failed to load quiz result: ' + err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            if (loading) {
+                return (
+                    <div className="text-center py-12">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                        <p className="mt-4 text-gray-600">Loading results...</p>
+                    </div>
+                );
+            }
+
+            if (error) {
+                return (
+                    <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+                        {error}
+                        <button
+                            onClick={() => navigate('home')}
+                            className="ml-4 bg-blue-600 text-white py-1 px-3 rounded-md hover:bg-blue-700"
+                        >
+                            Back to Home
+                        </button>
+                    </div>
+                );
+            }
+
+            if (!result) {
+                return (
+                    <div className="text-center py-12">
+                        <h1 className="text-3xl font-bold mb-4">No Results Found</h1>
+                        <p className="text-gray-600 mb-6">This quiz result could not be loaded.</p>
+                        <button
+                            onClick={() => navigate('home')}
+                            className="bg-blue-600 text-white py-2 px-6 rounded-md hover:bg-blue-700"
+                        >
+                            Back to Home
+                        </button>
+                    </div>
+                );
+            }
+
+            const getScoreColor = (score) => {
+                if (score >= 90) return 'text-green-600';
+                if (score >= 80) return 'text-blue-600';
+                if (score >= 70) return 'text-yellow-600';
+                return 'text-red-600';
+            };
+
+            const getScoreMessage = (score) => {
+                if (score >= 90) return 'Excellent!';
+                if (score >= 80) return 'Great job!';
+                if (score >= 70) return 'Good work!';
+                if (score >= 60) return 'Keep practicing!';
+                return 'Need more study!';
+            };
+
+            return (
+                <div className="max-w-4xl mx-auto">
+                    {/* Score Summary */}
+                    <div className="bg-white rounded-lg shadow-md p-8 mb-6 text-center">
+                        <h1 className="text-3xl font-bold mb-4">Quiz Results</h1>
+                        <div className={`text-6xl font-bold mb-4 ${getScoreColor(result.score)}`}>
+                            {result.score.toFixed(1)}%
+                        </div>
+                        <div className={`text-2xl font-semibold mb-4 ${getScoreColor(result.score)}`}>
+                            {getScoreMessage(result.score)}
+                        </div>
+                        <div className="text-lg text-gray-600 mb-6">
+                            You answered {result.correct_answers} out of {result.total_questions} questions correctly
+                        </div>
+                        <div className="flex justify-center space-x-4">
+                            <button
+                                onClick={() => navigate('home')}
+                                className="bg-blue-600 text-white py-2 px-6 rounded-md hover:bg-blue-700"
+                            >
+                                Back to Home
+                            </button>
+                            <button
+                                onClick={() => navigate('results')}
+                                className="bg-gray-600 text-white py-2 px-6 rounded-md hover:bg-gray-700"
+                            >
+                                View All Results
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Detailed Results */}
+                    <div className="bg-white rounded-lg shadow-md p-6">
+                        <h2 className="text-2xl font-semibold mb-6">Question by Question Review</h2>
+                        <div className="space-y-6">
+                            {result.detailed_results.map((item, index) => (
+                                <div key={item.question_id} className={`border-l-4 pl-4 ${item.is_correct ? 'border-green-500' : 'border-red-500'}`}>
+                                    <div className="flex items-start justify-between mb-2">
+                                        <h3 className="font-semibold text-lg">Question {index + 1}</h3>
+                                        <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                                            item.is_correct 
+                                                ? 'bg-green-100 text-green-800' 
+                                                : 'bg-red-100 text-red-800'
+                                        }`}>
+                                            {item.is_correct ? '✓ Correct' : '✗ Incorrect'}
+                                        </span>
+                                    </div>
+                                    <p className="text-gray-800 mb-4">{item.question}</p>
+                                    
+                                    <div className="grid gap-2">
+                                        {item.options.map((option, optIndex) => {
+                                            const isUserAnswer = option === item.user_answer;
+                                            const isCorrectAnswer = option === item.correct_answer;
+                                            
+                                            let className = 'p-3 rounded-lg border-2 ';
+                                            if (isCorrectAnswer) {
+                                                className += 'border-green-500 bg-green-50 text-green-800';
+                                            } else if (isUserAnswer && !isCorrectAnswer) {
+                                                className += 'border-red-500 bg-red-50 text-red-800';
+                                            } else {
+                                                className += 'border-gray-200 bg-gray-50 text-gray-700';
+                                            }
+                                            
+                                            return (
+                                                <div key={option} className={className}>
+                                                    <div className="flex items-center space-x-2">
+                                                        <span className="w-6 h-6 rounded-full bg-white flex items-center justify-center text-sm font-medium">
+                                                            {String.fromCharCode(65 + optIndex)}
+                                                        </span>
+                                                        <span>{option}</span>
+                                                        {isCorrectAnswer && <span className="ml-auto text-green-600">✓ Correct Answer</span>}
+                                                        {isUserAnswer && !isCorrectAnswer && <span className="ml-auto text-red-600">Your Answer</span>}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    
+                                    {!item.user_answer && (
+                                        <div className="mt-2 text-gray-500 italic">
+                                            No answer provided
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Enhanced ResultsListPage Component
+        function ResultsListPage({ navigate }) {
+            const [results, setResults] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState('');
+
+            useEffect(() => {
+                loadResults();
+            }, []);
+
+            const loadResults = async () => {
+                try {
+                    const response = await api.getQuizResults();
+                    setResults(response);
+                } catch (err) {
+                    setError('Failed to load quiz results: ' + err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const getScoreColor = (score) => {
+                if (score >= 90) return 'text-green-600';
+                if (score >= 80) return 'text-blue-600';
+                if (score >= 70) return 'text-yellow-600';
+                return 'text-red-600';
+            };
+
+            const getScoreBadgeColor = (score) => {
+                if (score >= 90) return 'bg-green-100 text-green-800';
+                if (score >= 80) return 'bg-blue-100 text-blue-800';
+                if (score >= 70) return 'bg-yellow-100 text-yellow-800';
+                return 'bg-red-100 text-red-800';
+            };
+
+            if (loading) {
+                return (
+                    <div className="text-center py-12">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                        <p className="mt-4 text-gray-600">Loading results...</p>
+                    </div>
+                );
+            }
+
+            if (error) {
+                return (
+                    <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+                        {error}
+                        <button
+                            onClick={() => navigate('home')}
+                            className="ml-4 bg-blue-600 text-white py-1 px-3 rounded-md hover:bg-blue-700"
+                        >
+                            Back to Home
+                        </button>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="max-w-6xl mx-auto">
+                    <div className="text-center mb-8">
+                        <h1 className="text-4xl font-bold text-gray-900 mb-4">Quiz Results History</h1>
+                        <p className="text-xl text-gray-600">Track your progress and review past quiz performances</p>
+                    </div>
+
+                    {results.length === 0 ? (
+                        <div className="text-center py-12">
+                            <div className="text-6xl mb-4">📊</div>
+                            <h2 className="text-2xl font-semibold text-gray-700 mb-4">No Quiz Results Yet</h2>
+                            <p className="text-gray-600 mb-6">Take your first quiz to see results here!</p>
+                            <button
+                                onClick={() => navigate('home')}
+                                className="bg-blue-600 text-white py-2 px-6 rounded-md hover:bg-blue-700"
+                            >
+                                Go to Home
+                            </button>
+                        </div>
+                    ) : (
+                        <>
+                            {/* Summary Stats */}
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                                <div className="bg-white rounded-lg shadow-md p-6 text-center">
+                                    <div className="text-3xl font-bold text-blue-600 mb-2">{results.length}</div>
+                                    <div className="text-gray-600">Total Quizzes</div>
+                                </div>
+                                <div className="bg-white rounded-lg shadow-md p-6 text-center">
+                                    <div className="text-3xl font-bold text-green-600 mb-2">
+                                        {results.length > 0 ? (results.reduce((sum, r) => sum + r.score, 0) / results.length).toFixed(1) : 0}%
+                                    </div>
+                                    <div className="text-gray-600">Average Score</div>
+                                </div>
+                                <div className="bg-white rounded-lg shadow-md p-6 text-center">
+                                    <div className="text-3xl font-bold text-purple-600 mb-2">
+                                        {results.length > 0 ? Math.max(...results.map(r => r.score)).toFixed(1) : 0}%
+                                    </div>
+                                    <div className="text-gray-600">Best Score</div>
+                                </div>
+                                <div className="bg-white rounded-lg shadow-md p-6 text-center">
+                                    <div className="text-3xl font-bold text-orange-600 mb-2">
+                                        {results.filter(r => r.score >= 80).length}
+                                    </div>
+                                    <div className="text-gray-600">Scores ≥ 80%</div>
+                                </div>
+                            </div>
+
+                            {/* Results List */}
+                            <div className="bg-white rounded-lg shadow-md overflow-hidden">
+                                <div className="px-6 py-4 border-b border-gray-200">
+                                    <h2 className="text-xl font-semibold">All Quiz Results</h2>
+                                </div>
+                                <div className="divide-y divide-gray-200">
+                                    {results.map((result) => (
+                                        <div key={result.id} className="px-6 py-4 hover:bg-gray-50 transition-colors">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex-1">
+                                                    <div className="flex items-center space-x-4">
+                                                        <div>
+                                                            <h3 className="font-semibold text-lg text-gray-900">
+                                                                {result.syllabus_filename}
+                                                            </h3>
+                                                            <div className="flex items-center space-x-4 text-sm text-gray-600 mt-1">
+                                                                <span>📅 {new Date(result.submitted_at).toLocaleDateString()}</span>
+                                                                <span>⏰ {new Date(result.submitted_at).toLocaleTimeString()}</span>
+                                                                <span>📝 {result.total_questions} questions</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center space-x-4">
+                                                    <div className="text-right">
+                                                        <div className={`text-2xl font-bold ${getScoreColor(result.score)}`}>
+                                                            {result.score.toFixed(1)}%
+                                                        </div>
+                                                        <div className="text-sm text-gray-600">
+                                                            {result.correct_answers}/{result.total_questions} correct
+                                                        </div>
+                                                    </div>
+                                                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${getScoreBadgeColor(result.score)}`}>
+                                                        {result.score >= 90 ? 'Excellent' : 
+                                                         result.score >= 80 ? 'Great' : 
+                                                         result.score >= 70 ? 'Good' : 
+                                                         result.score >= 60 ? 'Fair' : 'Needs Work'}
+                                                    </span>
+                                                    <button
+                                                        onClick={() => navigate('result', result.id)}
+                                                        className="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors"
+                                                    >
+                                                        View Details
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="text-center mt-8">
+                                <button
+                                    onClick={() => navigate('home')}
+                                    className="bg-gray-600 text-white py-2 px-6 rounded-md hover:bg-gray-700"
+                                >
+                                    Back to Home
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            );
+        }
+        
+        // Root App with Context
+        function Root() {
+            return (
+                <AuthProvider>
+                    <App />
+                </AuthProvider>
+            );
+        }
+        
+        ReactDOM.render(<Root />, document.getElementById('app'));
+    </script>
+</body>
+</html> 

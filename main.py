@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import os
 from dotenv import load_dotenv
+from fastapi.responses import Response
 
 # Load environment variables from .env file
 load_dotenv()
@@ -65,8 +66,14 @@ app.include_router(quiz.router, prefix="/api/quiz", tags=["quiz"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"])
 
 @app.get("/")
-async def root():
-    return {"message": "AnalyQuiz API is running!"}
+async def serve_frontend():
+    """Serve the frontend HTML file"""
+    try:
+        with open("index.html", "r", encoding="utf-8") as f:
+            content = f.read()
+        return Response(content=content, media_type="text/html")
+    except FileNotFoundError:
+        return {"message": "AnalyQuiz API is running!"}
 
 @app.get("/health")
 async def health_check():

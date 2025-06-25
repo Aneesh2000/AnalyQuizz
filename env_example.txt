@@ -1,0 +1,6 @@
+MONGODB_URI=mongodb://localhost:27017/
+JWT_SECRET_KEY=your-super-secret-jwt-key-here-change-this-in-production
+JWT_ALGORITHM=HS256
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+LLM_API_KEY=your-llm-api-key-here
+LLM_API_URL=https://api.x.ai/v1/chat/completions 

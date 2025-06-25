@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Quiz Components - AnalyQuiz</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+    <div id="app"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        
+        // Enhanced QuizPage Component
+        function QuizPage({ quizId, navigate }) {
+            const [quiz, setQuiz] = useState(null);
+            const [answers, setAnswers] = useState({});
+            const [timeLeft, setTimeLeft] = useState(0);
+            const [loading, setLoading] = useState(true);
+            const [submitting, setSubmitting] = useState(false);
+            const [error, setError] = useState('');
+            const [currentQuestion, setCurrentQuestion] = useState(0);
+            const intervalRef = useRef(null);
+
+            useEffect(() => {
+                loadQuiz();
+                return () => {
+                    if (intervalRef.current) {
+                        clearInterval(intervalRef.current);
+                    }
+                };
+            }, [quizId]);
+
+            const loadQuiz = async () => {
+                try {
+                    const response = await fetch(`http://localhost:8000/api/quiz/${quizId}`, {
+                        headers: {
+                            'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+                        }
+                    });
+                    
+                    if (!response.ok) throw new Error('Failed to load quiz');
+                    
+                    const quizData = await response.json();
+                    setQuiz(quizData);
+                    setTimeLeft(quizData.time_limit * 60);
+                    
+                    // Start timer
+                    intervalRef.current = setInterval(() => {
+                        setTimeLeft((prev) => {
+                            if (prev <= 1) {
+                                handleSubmit();
+                                return 0;
+                            }
+                            return prev - 1;
+                        });
+                    }, 1000);
+                } catch (err) {
+                    setError('Failed to load quiz: ' + err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleAnswerChange = (questionId, answer) => {
+                setAnswers(prev => ({
+                    ...prev,
+                    [questionId]: answer
+                }));
+            };
+
+            const handleSubmit = async () => {
+                if (submitting) return;
+                
+                setSubmitting(true);
+                
+                try {
+                    const response = await fetch('http://localhost:8000/api/quiz/submit', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+                        },
+                        body: JSON.stringify({
+                            quiz_id: quizId,
+                            answers: answers
+                        })
+                    });
+                    
+                    if (!response.ok) throw new Error('Failed to submit quiz');
+                    
+                    const result = await response.json();
+                    navigate('result', result.id);
+                } catch (err) {
+                    setError('Failed to submit quiz: ' + err.message);
+                    setSubmitting(false);
+                }
+            };
+
+            const formatTime = (seconds) => {
+                const minutes = Math.floor(seconds / 60);
+                const remainingSeconds = seconds % 60;
+                return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+            };
+
+            const nextQuestion = () => {
+                if (currentQuestion < quiz.questions.length - 1) {
+                    setCurrentQuestion(currentQuestion + 1);
+                }
+            };
+
+            const previousQuestion = () => {
+                if (currentQuestion > 0) {
+                    setCurrentQuestion(currentQuestion - 1);
+                }
+            };
+
+            const goToQuestion = (index) => {
+                setCurrentQuestion(index);
+            };
+
+            if (loading) {
+                return (
+                    <div className="text-center py-12">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                        <p className="mt-4 text-gray-600">Loading quiz...</p>
+                    </div>
+                );
+            }
+
+            if (error) {
+                return (
+                    <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+                        {error}
+                    </div>
+                );
+            }
+
+            const currentQ = quiz.questions[currentQuestion];
+            const progress = ((currentQuestion + 1) / quiz.questions.length) * 100;
+            const answeredCount = Object.keys(answers).length;
+
+            return (
+                <div className="max-w-4xl mx-auto">
+                    {/* Header with Timer and Progress */}
+                    <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+                        <div className="flex justify-between items-center mb-4">
+                            <h1 className="text-2xl font-bold">Quiz in Progress</h1>
+                            <div className={`text-xl font-mono ${timeLeft <= 300 ? 'text-red-600 animate-pulse' : 'text-green-600'}`}>
+                                ⏰ {formatTime(timeLeft)}
+                            </div>
+                        </div>
+                        
+                        <div className="mb-4">
+                            <div className="flex justify-between text-sm text-gray-600 mb-2">
+                                <span>Progress: {currentQuestion + 1} of {quiz.questions.length}</span>
+                                <span>Answered: {answeredCount}/{quiz.questions.length}</span>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                                <div 
+                                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                                    style={{width: `${progress}%`}}
+                                ></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Question Navigation */}
+                    <div className="bg-white rounded-lg shadow-md p-4 mb-6">
+                        <div className="grid grid-cols-10 gap-2">
+                            {quiz.questions.map((_, index) => (
+                                <button
+                                    key={index}
+                                    onClick={() => goToQuestion(index)}
+                                    className={`w-8 h-8 rounded text-sm font-medium ${
+                                        index === currentQuestion 
+                                            ? 'bg-blue-600 text-white' 
+                                            : answers[quiz.questions[index].id]
+                                                ? 'bg-green-500 text-white'
+                                                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                    }`}
+                                >
+                                    {index + 1}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Current Question */}
+                    <div className="bg-white rounded-lg shadow-md p-8">
+                        <div className="mb-6">
+                            <div className="text-sm text-gray-500 mb-2">
+                                Question {currentQuestion + 1} of {quiz.questions.length}
+                            </div>
+                            <h2 className="text-xl font-semibold text-gray-900">
+                                {currentQ.question}
+                            </h2>
+                        </div>
+                        
+                        <div className="space-y-4">
+                            {currentQ.options.map((option, index) => (
+                                <label
+                                    key={option}
+                                    className="flex items-center space-x-3 cursor-pointer hover:bg-gray-50 p-3 rounded-lg border-2 border-transparent hover:border-gray-200 transition-all"
+                                >
+                                    <input
+                                        type="radio"
+                                        name={`question-${currentQ.id}`}
+                                        value={option}
+                                        checked={answers[currentQ.id] === option}
+                                        onChange={(e) => handleAnswerChange(currentQ.id, e.target.value)}
+                                        className="text-blue-600 w-4 h-4"
+                                    />
+                                    <div className="flex items-center space-x-2">
+                                        <span className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-sm font-medium">
+                                            {String.fromCharCode(65 + index)}
+                                        </span>
+                                        <span className="text-gray-700">{option}</span>
+                                    </div>
+                                </label>
+                            ))}
+                        </div>
+
+                        {/* Navigation Buttons */}
+                        <div className="flex justify-between items-center mt-8">
+                            <button
+                                onClick={previousQuestion}
+                                disabled={currentQuestion === 0}
+                                className="px-6 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                Previous
+                            </button>
+                            
+                            <div className="text-sm text-gray-500">
+                                {answers[currentQ.id] ? '✓ Answered' : 'Not answered'}
+                            </div>
+                            
+                            {currentQuestion === quiz.questions.length - 1 ? (
+                                <button
+                                    onClick={handleSubmit}
+                                    disabled={submitting}
+                                    className="px-8 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 font-semibold"
+                                >
+                                    {submitting ? 'Submitting...' : 'Submit Quiz'}
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={nextQuestion}
+                                    className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                                >
+                                    Next
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Submit Warning for incomplete quiz */}
+                    {answeredCount < quiz.questions.length && (
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mt-6">
+                            <div className="flex items-center">
+                                <div className="text-yellow-600 mr-3">⚠️</div>
+                                <div>
+                                    <h3 className="text-yellow-800 font-medium">Incomplete Quiz</h3>
+                                    <p className="text-yellow-700 text-sm">
+                                        You have {quiz.questions.length - answeredCount} unanswered questions. 
+                                        You can submit anyway, but unanswered questions will be marked as incorrect.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // Demo component to show the enhanced quiz
+        function App() {
+            return (
+                <div className="min-h-screen bg-gray-50 p-8">
+                    <QuizPage quizId="demo" navigate={(page, data) => console.log('Navigate to:', page, data)} />
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('app'));
+    </script>
+</body>
+</html> 

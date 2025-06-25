@@ -15,4 +15,6 @@ services:
       - key: MONGODB_URI
         fromDatabase:
           name: analyquizz-db
-          property: connectionString 
+          property: connectionString
+      - key: CARGO_HOME
+        value: /tmp/cargo 

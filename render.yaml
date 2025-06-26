@@ -7,7 +7,7 @@ services:
     plan: free
     envVars:
       - key: PYTHON_VERSION
-        value: "3.11"
+        value: "3.11.0"
       - key: PIP_DISABLE_PIP_VERSION_CHECK
         value: 1
       - key: PIP_NO_CACHE_DIR

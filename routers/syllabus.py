@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 from typing import List
 import os
@@ -13,15 +13,14 @@ router = APIRouter()
 
 # Pydantic models
 class SyllabusResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: str
     user_id: str
     filename: str
     file_path: str
     extracted_text: str
     created_at: datetime
-    
-    class Config:
-        from_attributes = True
 
 class SyllabusListResponse(BaseModel):
     id: str

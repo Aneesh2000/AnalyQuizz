@@ -6,6 +6,8 @@ services:
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     plan: free
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
       - key: PIP_DISABLE_PIP_VERSION_CHECK
         value: 1
       - key: PIP_NO_CACHE_DIR
@@ -15,4 +17,4 @@ services:
       - key: MONGODB_URI
         fromDatabase:
           name: analyquizz-db
-          property: connectionString 
+          property: connectionString

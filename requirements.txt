@@ -1,12 +1,13 @@
 fastapi==0.104.1
+pydantic==2.7.2
+pydantic-core==2.18.3
+passlib[bcrypt]==1.7.4
 uvicorn==0.24.0
 pymongo==4.6.0
 PyPDF2==3.0.1
 pdfplumber==0.10.3
-passlib[bcrypt]==1.7.4
 PyJWT==2.8.0
 python-dotenv==1.0.0
 python-multipart==0.0.6
-pydantic==2.5.0
 email-validator==2.1.0
 httpx==0.25.2 

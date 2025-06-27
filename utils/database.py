@@ -1,6 +1,7 @@
 from pymongo import MongoClient
 import os
 from dotenv import load_dotenv
+import certifi
 
 # Load environment variables
 load_dotenv()
@@ -14,7 +15,7 @@ def initialize_database():
     global client, db
     
     try:
-        client = MongoClient(os.getenv("MONGODB_URI", "mongodb://localhost:27017/"))
+        client = MongoClient(os.getenv("MONGODB_URI", "mongodb://localhost:27017/"), tlsCAFile=certifi.where())
         db = client.analyquiz
         
         # Create indexes for better performance

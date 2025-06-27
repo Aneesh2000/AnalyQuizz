@@ -31,9 +31,20 @@ def initialize_database():
         raise
 
 def get_database():
-    """Get the database instance."""
+    """Return the database instance, initializing it if necessary.
+
+    Some serverless platforms (e.g., Vercel) do not always trigger FastAPI
+    lifespan events, which means ``initialize_database`` may never run on the
+    cold-start of a function.  To make the code more robust we perform a lazy
+    initialization here rather than raising an error.
+    """
+
+    global db
     if db is None:
-        raise RuntimeError("Database not initialized. Call initialize_database() first.")
+        # Attempt a one-time initialization. Any errors are propagated so the
+        # caller still receives a clear 500 response with a meaningful log.
+        initialize_database()
+
     return db
 
 def close_database():

@@ -41,11 +41,33 @@ async def upload_syllabus(
         raise HTTPException(status_code=400, detail="File size must be less than 10MB")
     
     try:
-        # Create unique filename
+        # Decide where to store the upload. "uploads/" works locally but most
+        # serverless platforms (e.g. Vercel) mount the project directory as
+        # read-only. They do, however, offer a writable /tmp directory. We try
+        # the normal folder first and gracefully fall back to /tmp/uploads.
+
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         filename = f"{timestamp}_{file.filename}"
-        file_path = os.path.join("uploads", filename)
-        
+
+        primary_dir = "uploads"
+        fallback_dir = "/tmp/uploads"
+
+        # Ensure a writable directory exists
+        uploads_dir = primary_dir
+        try:
+            os.makedirs(primary_dir, exist_ok=True)
+            # Test write permission by attempting to open a dummy file
+            _test_path = os.path.join(primary_dir, ".permcheck")
+            with open(_test_path, "w") as _tmp:
+                _tmp.write("ok")
+            os.remove(_test_path)
+        except Exception:
+            # Primary directory not writable (likely read-only FS)
+            uploads_dir = fallback_dir
+            os.makedirs(uploads_dir, exist_ok=True)
+
+        file_path = os.path.join(uploads_dir, filename)
+
         # Save file
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
